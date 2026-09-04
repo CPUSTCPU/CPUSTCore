@@ -1,0 +1,56 @@
+name: Bug 报告
+description: 报告可复现的功能、生成或工具问题
+title: "[Bug] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: 请提供最小可复现信息；硬件正确性问题请同时说明提交或异常边界。
+  - type: textarea
+    id: description
+    attributes:
+      label: 问题描述
+      description: 实际发生了什么，预期行为是什么？
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: 复现步骤
+      description: 请给出命令、输入、seed 和最小复现流程。
+      placeholder: |
+        1. Checkout ...
+        2. Run ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: input
+    id: revision
+    attributes:
+      label: 提交版本
+      description: Commit SHA 或分支名
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: 环境
+      description: JDK、sbt、Vivado、操作系统及其他相关版本
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: 日志或波形
+      description: 粘贴关键日志、断言、PC/指令序列或波形定位信息。
+      render: text
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: 提交前检查
+      options:
+        - label: 我已搜索现有 Issue，未发现同一问题。
+          required: true
+        - label: 我已移除日志中的凭据、个人路径和其他敏感信息。
+          required: true

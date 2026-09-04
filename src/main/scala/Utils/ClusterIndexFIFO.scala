@@ -1,0 +1,224 @@
+package CPUSTC.utils
+
+import chisel3._
+import chisel3.util._
+import CPUSTC.config._
+import scala.reflect.runtime.universe._
+import scala.reflect.ClassTag
+
+class ClusterEntry(wOffset: Int, wQidx: Int) extends Bundle {
+    val offset = UInt(wOffset.W)
+    val qidx   = UInt(wQidx.W)
+    val high   = UInt(1.W)
+    def getAge: UInt = {
+        high ## offset ## qidx
+    }
+    def apply(offset: UInt, qidx: UInt, high: UInt): ClusterEntry = {
+        val entry = Wire(new ClusterEntry(wOffset, wQidx))
+        entry.offset := offset
+        entry.qidx   := qidx
+        entry.high   := high
+        entry
+    }
+}
+
+class ClusterTailRestore(n: Int, len: Int) extends Bundle {
+    val tailOH    = Vec(n, UInt(len.W))
+    val tailHigh  = Vec(n, Bool())
+    val enqBaseOH = UInt(n.W)
+}
+
+class ClusterIndexFIFOIO[T <: Data](gen: T, n: Int, len: Int, ew: Int, dw: Int, rw: Int, ww: Int, isFlst: Boolean, supportTailRestore: Boolean) extends Bundle {
+    val enq 	= Vec(ew, Flipped(Decoupled(gen)))
+	val enqCapacity = Output(Bool())
+    val enqIdx  = Output(Vec(ew, new ClusterEntry(len, n)))
+	// Physical bank tails are already registered inside each IndexFIFO.  A
+	// banked consumer can use these rows directly without rotating through the
+	// logical enqueue lanes and then decoding the selected bank again.
+	val bankEnqOffset = Output(Vec(n, UInt(len.W)))
+	    val deq 	= Vec(dw, Decoupled(gen))
+			val deqPresent = Output(Vec(dw, Bool()))
+    val deqIdx  = Output(Vec(dw, new ClusterEntry(len, n)))
+    // Physical bank heads are already registered inside each IndexFIFO.  A
+    // banked consumer can use these rows directly instead of rotating them to
+    // logical dequeue lanes and then rotating them back to physical banks.
+    val bankDeqOffset = Output(Vec(n, UInt(len.W)))
+    // read port
+    val ridx    = Input(Vec(rw, new ClusterEntry(len, n)))
+    val rdata   = Output(Vec(rw, gen))
+    // write port
+    val widx    = Input(Vec(ww, new ClusterEntry(len, n)))
+    val wen     = Input(Vec(ww, Bool()))
+    val wdata   = Input(Vec(ww, gen))
+
+    val flush 	= Input(Bool())
+    val tailRestore = if (supportTailRestore) {
+        Some(Flipped(Valid(new ClusterTailRestore(n, len))))
+    } else {
+        None
+    }
+    val dbgFIFO = Output(Vec(n*len, gen))
+}
+
+class ClusterIndexFIFO[T <: Data : TypeTag : ClassTag](gen: T, num: Int, ew: Int, dw: Int, rw: Int, ww: Int, isFlst: Boolean = false, rstVal: Option[Seq[T]] = None, supportTailRestore: Boolean = false) extends Module {
+    val n = if(dw > ew) dw else ew
+    val len = num / n
+    assert(num % n == 0, "cluster fifo num must be divisible by n")
+    require(!supportTailRestore || !isFlst)
+    // println(s"n: $n, len: $len, num: $num, ew: $ew, dw: $dw")
+    val io = IO(new ClusterIndexFIFOIO(gen, n, len, ew, dw, rw, ww, isFlst, supportTailRestore))
+
+    val fifos = VecInit.tabulate(n)(i => Module(new IndexFIFO(gen, len, rw, ww, isFlst,
+        if (rstVal.isDefined) Some(rstVal.get.slice(i*len, (i+1)*len)) else None,
+        supportTailRestore)).io)
+
+    if (supportTailRestore) {
+        val restore = io.tailRestore.get
+        fifos.zipWithIndex.foreach { case (fifo, i) =>
+            fifo.tailRestore.get.valid      := restore.valid
+            fifo.tailRestore.get.bits.ptrOH := restore.bits.tailOH(i)
+            fifo.tailRestore.get.bits.high  := restore.bits.tailHigh(i)
+        }
+    }
+
+    // enq
+    val allEnqReady = fifos.map(_.enq.ready).reduce(_ && _)
+	io.enqCapacity := fifos.map(_.enqCapacity).reduce(_ && _)
+    val enqPtr = RegInit(VecInit.tabulate(ew)(i => (1 << i).U(n.W)))
+    val enqPtrTrans = Transpose(enqPtr)
+    fifos.zipWithIndex.foreach{ case (fifo, i) =>
+        fifo.enq.valid := (Mux1H(enqPtrTrans(i), io.enq.map(_.valid))
+                       && allEnqReady
+                       && (if(dw > ew) enqPtrTrans(i).orR else true.B))
+        fifo.enq.bits := Mux1H(enqPtrTrans(i), io.enq.map(_.bits))
+    }
+    // the enq ready is 1 only when all the fifos are ready
+    io.enq.foreach{_.ready := allEnqReady}
+    io.enqIdx.zipWithIndex.foreach{ case(idx, i) =>
+        idx.qidx := enqPtr(i)
+        idx.offset := Mux1H(enqPtr(i), fifos.map(_.enqIdx))
+        idx.high := Mux1H(enqPtr(i), fifos.map(_.enqHigh))
+    }
+    io.bankEnqOffset.zip(fifos).foreach { case (offset, fifo) =>
+        offset := fifo.enqIdx
+    }
+
+    // deq
+	    val allDeqValid = if(isFlst) fifos.map(_.deq.valid).reduce(_ && _) else true.B
+	    val allDeqPresent = if(isFlst) fifos.map(_.deqPresent).reduce(_ && _) else true.B
+    val deqPtr = RegInit(VecInit.tabulate(dw)(i => (1 << i).U(n.W)))
+    val deqPtrTrans = Transpose(deqPtr)
+	    io.deq.zipWithIndex.foreach{ case (deq, i) =>
+	        deq.valid := Mux1H(deqPtr(i), fifos.map(_.deq.valid)) && allDeqValid
+	        deq.bits  := Mux1H(deqPtr(i), fifos.map(_.deq.bits))
+			io.deqPresent(i) :=
+				Mux1H(deqPtr(i), fifos.map(_.deqPresent)) && allDeqPresent
+	    }
+    io.deqIdx.zipWithIndex.foreach{ case(idx, i) =>
+        idx.qidx    := deqPtr(i)
+        idx.offset  := Mux1H(deqPtr(i), fifos.map(_.deqIdx))
+        idx.high    := Mux1H(deqPtr(i), fifos.map(_.deqHigh))
+
+    }
+    io.bankDeqOffset.zip(fifos).foreach { case (offset, fifo) =>
+        offset := fifo.deqIdx
+    }
+
+    fifos.zipWithIndex.foreach{ case (fifo, i) =>
+        fifo.deq.ready := (Mux1H(deqPtrTrans(i), io.deq.map(_.ready))
+                        && allDeqValid
+                        && (if(dw > ew) true.B else deqPtrTrans(i).orR))
+    }
+
+    // commit
+    val commitPtr = RegInit(VecInit.tabulate(dw)(i => (1 << i).U(n.W)))
+
+    // update enqPtr
+    if(isFlst){
+        // val counter = BitAlign(PopCount(io.enq.map(_.valid).zip(io.enq.map(_.ready)).map{ case (v, r) => v && r}), log2Ceil(n))
+        val counter = BitAlign(Log2(VecInit(io.enq.map(_.valid).zip(io.enq.map(_.ready)).map{ case (v, r) => v && r}).asUInt << 1), log2Ceil(n))
+        enqPtr.foreach{ ptr => ptr := VecInit.tabulate(n)(i => ShiftAddN(ptr, i))(counter)}
+    }else if(supportTailRestore){
+        when(io.flush){
+            enqPtr.zipWithIndex.foreach{ case (ptr, i) => ptr := (1 << i).U(n.W) }
+        }.elsewhen(io.tailRestore.get.valid){
+            val base = io.tailRestore.get.bits.enqBaseOH
+            enqPtr.zipWithIndex.foreach{ case (ptr, i) =>
+                ptr := ShiftAddN(base, i)
+            }
+        }.otherwise{
+            // val counter = BitAlign(PopCount(io.enq.map(_.valid).zip(io.enq.map(_.ready)).map{ case (v, r) => v && r}), log2Ceil(n))
+            val counter = BitAlign(Log2(VecInit(io.enq.map(_.valid).zip(io.enq.map(_.ready)).map{ case (v, r) => v && r}).asUInt << 1), log2Ceil(n))
+            enqPtr.foreach{ ptr => ptr := Mux(allEnqReady, VecInit.tabulate(n)(i => ShiftAddN(ptr, i))(counter), ptr)}
+        }
+    }else{
+        when(io.flush){
+            enqPtr.zipWithIndex.foreach{ case (ptr, i) => ptr := (1 << i).U(n.W) }
+        }.otherwise{
+            // val counter = BitAlign(PopCount(io.enq.map(_.valid).zip(io.enq.map(_.ready)).map{ case (v, r) => v && r}), log2Ceil(n))
+            val counter = BitAlign(Log2(VecInit(io.enq.map(_.valid).zip(io.enq.map(_.ready)).map{ case (v, r) => v && r}).asUInt << 1), log2Ceil(n))
+            enqPtr.foreach{ ptr => ptr := Mux(allEnqReady, VecInit.tabulate(n)(i => ShiftAddN(ptr, i))(counter), ptr)}
+        }
+    }
+
+    // update deqPtr
+    when(io.flush){
+        if(isFlst){
+            deqPtr := commitPtr
+        }else{
+            deqPtr.zipWithIndex.foreach{ case (ptr, i) => ptr := (1 << i).U(n.W) }
+        }
+    }.otherwise{
+        // val counter = BitAlign(PopCount(io.deq.map(_.valid).zip(io.deq.map(_.ready)).map{ case (v, r) => v && r}), log2Ceil(n))
+        val counter = BitAlign(Log2(VecInit(io.deq.map(_.valid).zip(io.deq.map(_.ready)).map{ case (v, r) => v && r}).asUInt << 1), log2Ceil(n))
+        deqPtr.foreach{ ptr => ptr := Mux(allDeqValid, VecInit.tabulate(n)(i => ShiftAddN(ptr, i))(counter), ptr)}
+    }
+
+    // update commitPtr
+    if(isFlst){
+        // val counter = BitAlign(PopCount(io.enq.map(_.valid).zip(io.enq.map(_.ready)).map{ case (v, r) => v && r}), log2Ceil(n))
+        val counter = BitAlign(Log2(VecInit(io.enq.map(_.valid).zip(io.enq.map(_.ready)).map{ case (v, r) => v && r}).asUInt << 1), log2Ceil(n))
+        commitPtr.foreach{ ptr => ptr := VecInit.tabulate(n)(i => ShiftAddN(ptr, i))(counter)}
+    }
+
+    fifos.foreach{_.flush := io.flush}
+
+    // random read logic
+    fifos.map(_.ridx := io.ridx.map(_.offset))
+    io.rdata.zipWithIndex.foreach{ case (rdata, i) =>
+        rdata := Mux1H(io.ridx(i).qidx, fifos.map(_.rdata(i)))
+    }
+
+    // random write logic
+    fifos.map(_.widx := io.widx.map(_.offset))
+    fifos.map(_.wdata := io.wdata)
+    fifos.zipWithIndex.foreach{case(fifo, i) =>
+        fifo.wen.zipWithIndex.foreach{ case(wen, j) =>
+            wen := io.widx(j).qidx(i) && io.wen(j)
+        }
+    }
+
+    for(i <- 0 until len){
+        for(j <- 0 until n){
+            io.dbgFIFO(i*n+j) := fifos(j).dbgFIFO(i)
+        }
+    }
+
+    io.tailRestore.foreach { restore =>
+        when(restore.valid) {
+            assert(PopCount(restore.bits.enqBaseOH) === 1.U)
+            restore.bits.tailOH.foreach { ptr =>
+                assert(PopCount(ptr) === 1.U)
+            }
+            io.enq.foreach(enq => assert(!enq.fire))
+            io.deq.foreach(deq => assert(!deq.fire))
+        }
+    }
+
+}
+
+object ClusterIndexFIFO{
+    def apply[T <: Data : TypeTag : ClassTag](gen: T, num: Int, ew: Int, dw: Int, rw: Int, ww: Int, supportTailRestore: Boolean = false): ClusterIndexFIFO[T] = {
+        new ClusterIndexFIFO(gen, num, ew, dw, rw, ww, supportTailRestore = supportTailRestore)
+    }
+}

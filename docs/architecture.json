@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "CPUSTCore microarchitecture",
+    "locale": "en",
+    "quality_profile": "showcase",
+    "legend": { "mode": "hidden" },
+    "viewBox": [1390, 830]
+  },
+  "components": [
+    { "id": "bpu", "type": "frontend", "label": "Branch Prediction", "sublabel": "BTB · Agree · MiniTAGE · RAS", "pos": [50, 115], "size": [220, 80] },
+    { "id": "fetch", "type": "frontend", "label": "NPC / Instruction Fetch", "sublabel": "next-PC selection · predecode", "pos": [300, 115], "size": [220, 80] },
+    { "id": "icache", "type": "frontend", "label": "Instruction Cache", "sublabel": "16 KiB · 4-way · TLB-backed", "pos": [550, 115], "size": [220, 80] },
+    { "id": "ftq", "type": "frontend", "label": "FTQ / Instruction Buffer", "sublabel": "16-entry FTQ · 12-entry IBuffer", "pos": [800, 115], "size": [250, 80] },
+    { "id": "decode", "type": "frontend", "label": "3-way Decode", "sublabel": "predecode · main · FU decode", "pos": [1085, 115], "size": [270, 80] },
+
+    { "id": "rename", "type": "backend", "label": "Rename", "sublabel": "MapTable · BusyTable · FreeList", "pos": [50, 300], "size": [280, 80] },
+    { "id": "dispatch", "type": "backend", "label": "Dispatch", "sublabel": "ROB and LSQ allocation", "pos": [380, 300], "size": [280, 80] },
+    { "id": "regread", "type": "backend", "label": "Register Read", "sublabel": "LVT PRF · forwarding · relay", "pos": [710, 300], "size": [280, 80] },
+    { "id": "rob", "type": "backend", "label": "ROB / Commit", "sublabel": "33 entries · precise exceptions", "pos": [1045, 300], "size": [310, 80] },
+
+    { "id": "intiq", "type": "backend", "label": "Integer Issue Queue", "sublabel": "9 entries · 3 issue ports", "pos": [50, 475], "size": [220, 80] },
+    { "id": "intex", "type": "backend", "label": "Integer Execute", "sublabel": "ALU · branch · MUL · DIV", "pos": [320, 475], "size": [220, 80] },
+    { "id": "memiq", "type": "backend", "label": "Memory Issue Queue", "sublabel": "6 entries · 2 issue ports", "pos": [50, 650], "size": [220, 80] },
+    { "id": "memex", "type": "backend", "label": "Memory Execute", "sublabel": "AGU · load / store pipeline", "pos": [320, 650], "size": [220, 80] },
+    { "id": "writeback", "type": "backend", "label": "Writeback", "sublabel": "PRF updates · dependency wakeup", "pos": [600, 560], "size": [220, 80] },
+
+    { "id": "mshr", "type": "cloud", "label": "MSHR / WBB", "sublabel": "4 MSHR · 2 writeback entries", "pos": [875, 475], "size": [220, 80] },
+    { "id": "l2", "type": "cloud", "label": "Unified L2 / AXI", "sublabel": "64 KiB L2 · refill / writeback", "pos": [1135, 475], "size": [220, 80] },
+    { "id": "lsq", "type": "database", "label": "Load / Store Queue", "sublabel": "LQ 10 · SQ 8 · forwarding / replay", "pos": [875, 650], "size": [220, 80] },
+    { "id": "dcache", "type": "database", "label": "L1 Data Cache", "sublabel": "8 KiB · 2-way · 2 ports", "pos": [1135, 650], "size": [220, 80] }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "Frontend", "wraps": ["bpu", "fetch", "icache", "ftq", "decode"], "pad": 22 },
+    { "kind": "region", "label": "Rename / Dispatch", "wraps": ["rename", "dispatch", "regread"], "pad": 22 },
+    { "kind": "region", "label": "Retirement", "wraps": ["rob"], "pad": 22 },
+    { "kind": "region", "label": "Out-of-order backend", "wraps": ["intiq", "intex", "memiq", "memex", "writeback"], "pad": 22 },
+    { "kind": "region", "label": "Memory system", "wraps": ["mshr", "l2", "lsq", "dcache"], "pad": 22 }
+  ],
+  "connections": [
+    { "id": "predict-fetch", "from": "bpu", "to": "fetch", "variant": "emphasis" },
+    { "id": "fetch-icache", "from": "fetch", "to": "icache", "variant": "emphasis" },
+    { "id": "icache-ftq", "from": "icache", "to": "ftq", "variant": "emphasis" },
+    { "id": "ftq-decode", "from": "ftq", "to": "decode", "variant": "emphasis" },
+    { "id": "decode-rename", "from": "decode", "to": "rename", "fromSide": "bottom", "toSide": "top", "via": [[1220, 235], [190, 235]] },
+    { "id": "rename-dispatch", "from": "rename", "to": "dispatch", "variant": "emphasis" },
+    { "id": "dispatch-regread", "from": "dispatch", "to": "regread", "variant": "emphasis" },
+    { "id": "regread-int", "from": "regread", "to": "intiq", "fromSide": "bottom", "toSide": "top", "via": [[850, 430], [160, 430]] },
+    { "id": "regread-mem", "from": "regread", "to": "memiq", "fromSide": "bottom", "toSide": "left", "via": [[850, 415], [15, 415], [15, 690]] },
+    { "id": "intiq-intex", "from": "intiq", "to": "intex", "variant": "emphasis" },
+    { "id": "memiq-memex", "from": "memiq", "to": "memex", "variant": "emphasis" },
+    { "id": "intex-writeback", "from": "intex", "to": "writeback", "fromSide": "right", "toSide": "left", "via": [[565, 515], [565, 600]], "variant": "emphasis" },
+    { "id": "memex-writeback", "from": "memex", "to": "writeback", "fromSide": "top", "toSide": "bottom", "via": [[430, 620], [570, 620], [570, 660], [710, 660]], "variant": "emphasis" },
+    { "id": "writeback-rob", "from": "writeback", "to": "rob", "fromSide": "top", "toSide": "bottom", "via": [[710, 445], [1200, 445]], "variant": "emphasis" },
+    { "id": "memex-lsq", "from": "memex", "to": "lsq", "variant": "emphasis" },
+    { "id": "lsq-dcache", "from": "lsq", "to": "dcache", "variant": "emphasis" },
+    { "id": "dcache-mshr", "from": "dcache", "to": "mshr", "fromSide": "right", "toSide": "bottom", "via": [[1375, 690], [1375, 575], [985, 575]] },
+    { "id": "mshr-l2", "from": "mshr", "to": "l2", "variant": "emphasis" },
+    { "id": "dcache-writeback", "from": "dcache", "to": "writeback", "fromSide": "top", "toSide": "right", "via": [[1245, 600], [850, 600]] },
+    { "id": "branch-recovery", "from": "rob", "to": "bpu", "variant": "dashed", "fromSide": "right", "toSide": "top", "via": [[1385, 340], [1385, 75], [160, 75]] }
+  ]
+}

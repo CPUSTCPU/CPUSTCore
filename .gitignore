@@ -1,0 +1,88 @@
+target/
+test_run_dir/
+test_run_dir_*/
+!.mvn/wrapper/maven-wrapper.jar
+!**/src/main/**/target/
+!**/src/test/**/target/
+
+### IntelliJ IDEA ###
+.idea/
+*.iws
+*.iml
+*.ipr
+out/
+!**/src/main/**/out/
+!**/src/test/**/out/
+
+### Eclipse ###
+.apt_generated
+.classpath
+.factorypath
+.project
+.settings
+.springBeans
+.sts4-cache
+bin/
+!**/src/main/**/bin/
+!**/src/test/**/bin/
+
+### NetBeans ###
+/nbproject/private/
+/nbbuild/
+/dist/
+/nbdist/
+/.nb-gradle/
+build/
+!**/src/main/**/build/
+!**/src/test/**/build/
+
+### VS Code ###
+.vscode/
+
+### Codex ###
+/.codex/
+
+### Local agent and editor metadata ###
+/.ai/
+
+### Local timing iterations ###
+/TIMING_OPT_LOG.md
+/T[0-9]*_FREEZE_MANIFEST.md
+/sim/asm/*.bin
+/sim/asm/*.elf
+
+### Scala ###
+.bsp/
+.metals/
+.scala-build/
+/project/.boot/
+
+*.class
+*.log
+*.jou
+*.pb
+*.vcd
+*.fst
+*.fir
+*.anno.json
+*.sv
+*.v
+
+### Python ###
+__pycache__/
+*.py[cod]
+
+### Mac OS ###
+.DS_Store
+
+### gen ###
+generated/
+
+### tmp ###
+tmp/
+
+### zip ###
+src/main/scala/MemorySystem.zip
+
+### others ###
+cp.sh
